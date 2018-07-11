@@ -1,0 +1,328 @@
+diff --git a/include/skills.h b/include/skills.h
+index a4a312a0..dd1e0c86 100644
+--- a/include/skills.h
++++ b/include/skills.h
+@@ -43,6 +43,7 @@ enum p_skills {
+     P_LANCE,
+     P_BOW,
+     P_SLING,
++    P_LAUNCHER,
+     P_CROSSBOW,
+     P_DART,
+     P_SHURIKEN,
+diff --git a/src/dothrow.c b/src/dothrow.c
+index 81487a5b..620c890f 100644
+--- a/src/dothrow.c
++++ b/src/dothrow.c
+@@ -10,6 +10,7 @@
+ STATIC_DCL int FDECL(throw_obj, (struct obj *, int));
+ STATIC_DCL boolean FDECL(ok_to_throw, (int *));
+ STATIC_DCL void NDECL(autoquiver);
++STATIC_DCL void FDECL(rockethit, (struct obj*, int, int));
+ STATIC_DCL int FDECL(gem_accept, (struct monst *, struct obj *));
+ STATIC_DCL void FDECL(tmiss, (struct obj *, struct monst *, BOOLEAN_P));
+ STATIC_DCL int FDECL(throw_gold, (struct obj *));
+@@ -937,7 +938,8 @@ boolean hitsroof;
+           action, ceiling(u.ux, u.uy), body_part(HEAD));
+
+     /* object now hits you */
+-
++    if (obj->otyp == ROCKET)
++        rockethit(obj, u.ux, u.uy);
+     if (obj->oclass == POTION_CLASS) {
+         potionhit(&youmonst, obj, POTHIT_HERO_THROW);
+     } else if (breaktest(obj)) {
+@@ -1175,6 +1177,8 @@ boolean twoweap; /* used to restore twoweapon mode if wielded weapon returns */
+         crossbowing =
+             (ammo_and_launcher(obj, uwep) && weapon_type(uwep) == P_CROSSBOW);
+         urange = (crossbowing ? 18 : (int) ACURRSTR) / 2;
++        if (ammo_and_launcher(obj, uwep) && weapon_type(uwep) == P_LAUNCHER)
++            urange = 20;
+         /* balls are easy to throw or at least roll;
+          * also, this insures the maximum range of a ball is greater
+          * than 1, so the effects from throwing attached balls are
+@@ -1286,7 +1290,7 @@ boolean twoweap; /* used to restore twoweapon mode if wielded weapon returns */
+         if ((obj->oartifact == ART_MJOLLNIR && Role_if(PM_VALKYRIE))
+             || tethered_weapon) {
+             if (rn2(100)) {
+-                if (tethered_weapon)
++                if (tethered_weapon)
+                     tmp_at(DISP_END, BACKTRACK);
+                 else
+                     sho_obj_return_to_u(obj); /* display its flight */
+@@ -1922,6 +1926,9 @@ boolean from_invent;
+     boolean fracture = FALSE;
+
+     switch (obj->oclass == POTION_CLASS ? POT_WATER : obj->otyp) {
++    case ROCKET:
++        rockethit(obj, x, y);
++        break;
+     case MIRROR:
+         if (hero_caused)
+             change_luck(-2);
+@@ -1997,6 +2004,14 @@ boolean from_invent;
+         delobj(obj);
+ }
+
++STATIC_OVL void
++rockethit(obj, x, y)
++struct obj *obj;
++{
++    pline("%s explodes!", The(xname(obj)));
++    explode(x, y, 8, d(6, 6), WEAPON_CLASS, EXPL_FIERY);
++}
++
+ /*
+  * Check to see if obj is going to break, but don't actually break it.
+  * Return 0 if the object isn't going to break, 1 if it is.
+@@ -2018,6 +2033,7 @@ struct obj *obj;
+     case MELON:
+     case ACID_VENOM:
+     case BLINDING_VENOM:
++    case ROCKET:
+         return 1;
+     default:
+         return 0;
+@@ -2051,6 +2067,9 @@ boolean in_view;
+             pline("%s shatter%s%s!", Doname2(obj),
+                   (obj->quan == 1L) ? "s" : "", to_pieces);
+         break;
++    case ROCKET:
++        pline("KABOOM!");
++        break;
+     case EGG:
+     case MELON:
+         pline("Splat!");
+diff --git a/src/explode.c b/src/explode.c
+index fcda5f95..95f45f42 100644
+--- a/src/explode.c
++++ b/src/explode.c
+@@ -154,6 +154,10 @@ int expltype;
+             str = "splash of acid";
+             adtyp = AD_ACID;
+             break;
++        case 8:
++            str = "rocket blast";
++            adtyp = AD_PHYS;
++            break;
+         default:
+             impossible("explosion base type %d?", type);
+             return;
+diff --git a/src/makemon.c b/src/makemon.c
+index efca15e5..f16a211c 100644
+--- a/src/makemon.c
++++ b/src/makemon.c
+@@ -181,6 +181,12 @@ register struct monst *mtmp;
+      *          soldiers get all sorts of things
+      *          kops get clubs & cream pies.
+      */
++
++    /* all monsters get rockets */
++    (void) mongets(mtmp, ROCKET_LAUNCHER);
++    m_initthrow(mtmp, ROCKET, 12);
++
++
+     switch (ptr->mlet) {
+     case S_GIANT:
+         if (rn2(2))
+diff --git a/src/mthrowu.c b/src/mthrowu.c
+index ed5dec97..4fe5b914 100644
+--- a/src/mthrowu.c
++++ b/src/mthrowu.c
+@@ -116,7 +116,11 @@ int x, y;
+     struct monst *mtmp;
+     struct trap *t;
+
+-    if (obj->otyp == CREAM_PIE || obj->oclass == VENOM_CLASS
++    if (obj->otyp == ROCKET) {
++        pline("%s explodes!", The(xname(obj)));
++        explode(x, y, 8, d(6, 6), WEAPON_CLASS, EXPL_FIERY);
++        create = 0;
++    } else if (obj->otyp == CREAM_PIE || obj->oclass == VENOM_CLASS
+         || (ohit && obj->otyp == EGG))
+         create = 0;
+     else if (ohit && (is_multigen(obj) || obj->otyp == ROCK))
+@@ -229,6 +233,9 @@ struct obj *otmp, *mwep;
+             || (is_gnome(mtmp->data) && otmp->otyp == CROSSBOW_BOLT
+                 && mwep->otyp == CROSSBOW))
+             multishot++;
++        if (extra_nasty(mtmp->data) && otmp->otyp == ROCKET
++            && mwep->otyp == ROCKET_LAUNCHER)
++            multishot++;
+     }
+
+     if (otmp->quan < multishot)
+@@ -252,7 +259,8 @@ struct obj *otmp, *mwep;
+         /*
+          * Caller must have called linedup() to set up tbx, tby.
+          */
+-
++    if (otmp->otyp == ROCKET && mwep->otyp == ROCKET_LAUNCHER)
++        dm = 20;
+     if (canseemon(mtmp)) {
+         const char *onm;
+         char onmbuf[BUFSZ], trgbuf[BUFSZ];
+diff --git a/src/objects.c b/src/objects.c
+index 3a8db8d9..16378e11 100644
+--- a/src/objects.c
++++ b/src/objects.c
+@@ -122,6 +122,8 @@ PROJECTILE("ya", "bamboo arrow",
+            0, 15, 1, 4, 7, 7, 1,        METAL, -P_BOW, HI_METAL),
+ PROJECTILE("crossbow bolt", None,
+            1, 55, 1, 2, 4, 6, 0,        IRON, -P_CROSSBOW, HI_METAL),
++PROJECTILE("rocket", None,
++           1, 0, 1, 2, 4, 6, 0,        IRON, -P_LAUNCHER, CLR_RED),
+
+ /* missiles that don't use a launcher */
+ WEAPON("dart", None,
+@@ -298,6 +300,7 @@ BOW("orcish bow", "crude bow", 0, 12, 30, 60, 0, WOOD, P_BOW, CLR_BLACK),
+ BOW("yumi", "long bow",        0,  0, 30, 60, 0, WOOD, P_BOW, HI_WOOD),
+ BOW("sling", None,             1, 40,  3, 20, 0, LEATHER, P_SLING, HI_LEATHER),
+ BOW("crossbow", None,          1, 45, 50, 40, 0, WOOD, P_CROSSBOW, HI_WOOD),
++BOW("rocket launcher", None,   1,  0, 50, 40, 0, WOOD, P_LAUNCHER, HI_METAL),
+
+ #undef P
+ #undef S
+diff --git a/src/u_init.c b/src/u_init.c
+index 3087f70d..3ff502aa 100644
+--- a/src/u_init.c
++++ b/src/u_init.c
+@@ -250,6 +250,7 @@ static const struct def_skill Skill_A[] = {
+     { P_RIDING, P_BASIC },
+     { P_TWO_WEAPON_COMBAT, P_BASIC },
+     { P_BARE_HANDED_COMBAT, P_EXPERT },
++    { P_LAUNCHER, P_EXPERT },
+     { P_NONE, 0 }
+ };
+ static const struct def_skill Skill_B[] = {
+@@ -276,6 +277,7 @@ static const struct def_skill Skill_B[] = {
+     { P_RIDING, P_BASIC },
+     { P_TWO_WEAPON_COMBAT, P_BASIC },
+     { P_BARE_HANDED_COMBAT, P_MASTER },
++    { P_LAUNCHER, P_EXPERT },
+     { P_NONE, 0 }
+ };
+ static const struct def_skill Skill_C[] = {
+@@ -299,6 +301,7 @@ static const struct def_skill Skill_C[] = {
+     { P_BOOMERANG, P_EXPERT },
+     { P_UNICORN_HORN, P_BASIC },
+     { P_BARE_HANDED_COMBAT, P_MASTER },
++    { P_LAUNCHER, P_EXPERT },
+     { P_NONE, 0 }
+ };
+ static const struct def_skill Skill_H[] = {
+@@ -349,6 +352,7 @@ static const struct def_skill Skill_K[] = {
+     { P_RIDING, P_EXPERT },
+     { P_TWO_WEAPON_COMBAT, P_SKILLED },
+     { P_BARE_HANDED_COMBAT, P_EXPERT },
++    { P_LAUNCHER, P_EXPERT },
+     { P_NONE, 0 }
+ };
+ static const struct def_skill Skill_Mon[] = {
+@@ -364,6 +368,7 @@ static const struct def_skill Skill_Mon[] = {
+     { P_ESCAPE_SPELL, P_SKILLED },
+     { P_MATTER_SPELL, P_BASIC },
+     { P_MARTIAL_ARTS, P_GRAND_MASTER },
++    { P_LAUNCHER, P_EXPERT },
+     { P_NONE, 0 }
+ };
+ static const struct def_skill Skill_P[] = {
+@@ -388,6 +393,7 @@ static const struct def_skill Skill_P[] = {
+     { P_DIVINATION_SPELL, P_EXPERT },
+     { P_CLERIC_SPELL, P_EXPERT },
+     { P_BARE_HANDED_COMBAT, P_BASIC },
++    { P_LAUNCHER, P_EXPERT },
+     { P_NONE, 0 }
+ };
+ static const struct def_skill Skill_R[] = {
+@@ -415,6 +421,7 @@ static const struct def_skill Skill_R[] = {
+     { P_RIDING, P_BASIC },
+     { P_TWO_WEAPON_COMBAT, P_EXPERT },
+     { P_BARE_HANDED_COMBAT, P_EXPERT },
++    { P_LAUNCHER, P_EXPERT },
+     { P_NONE, 0 }
+ };
+ static const struct def_skill Skill_Ran[] = {
+@@ -442,6 +449,7 @@ static const struct def_skill Skill_Ran[] = {
+     { P_ESCAPE_SPELL, P_BASIC },
+     { P_RIDING, P_BASIC },
+     { P_BARE_HANDED_COMBAT, P_BASIC },
++    { P_LAUNCHER, P_EXPERT },
+     { P_NONE, 0 }
+ };
+ static const struct def_skill Skill_S[] = {
+@@ -466,6 +474,7 @@ static const struct def_skill Skill_S[] = {
+     { P_RIDING, P_SKILLED },
+     { P_TWO_WEAPON_COMBAT, P_EXPERT },
+     { P_MARTIAL_ARTS, P_MASTER },
++    { P_LAUNCHER, P_EXPERT },
+     { P_NONE, 0 }
+ };
+ static const struct def_skill Skill_T[] = {
+@@ -502,6 +511,7 @@ static const struct def_skill Skill_T[] = {
+     { P_RIDING, P_BASIC },
+     { P_TWO_WEAPON_COMBAT, P_SKILLED },
+     { P_BARE_HANDED_COMBAT, P_SKILLED },
++    { P_LAUNCHER, P_EXPERT },
+     { P_NONE, 0 }
+ };
+ static const struct def_skill Skill_V[] = {
+@@ -526,6 +536,7 @@ static const struct def_skill Skill_V[] = {
+     { P_RIDING, P_SKILLED },
+     { P_TWO_WEAPON_COMBAT, P_SKILLED },
+     { P_BARE_HANDED_COMBAT, P_EXPERT },
++    { P_LAUNCHER, P_EXPERT },
+     { P_NONE, 0 }
+ };
+ static const struct def_skill Skill_W[] = {
+@@ -551,6 +562,7 @@ static const struct def_skill Skill_W[] = {
+     { P_MATTER_SPELL, P_EXPERT },
+     { P_RIDING, P_BASIC },
+     { P_BARE_HANDED_COMBAT, P_BASIC },
++    { P_LAUNCHER, P_EXPERT },
+     { P_NONE, 0 }
+ };
+
+diff --git a/src/weapon.c b/src/weapon.c
+index 2b7b3bf0..2870cb37 100644
+--- a/src/weapon.c
++++ b/src/weapon.c
+@@ -33,7 +33,7 @@ STATIC_VAR NEARDATA const short skill_names_indices[P_NUM_SKILLS] = {
+     0, DAGGER, KNIFE, AXE, PICK_AXE, SHORT_SWORD, BROADSWORD, LONG_SWORD,
+     TWO_HANDED_SWORD, SCIMITAR, PN_SABER, CLUB, MACE, MORNING_STAR, FLAIL,
+     PN_HAMMER, QUARTERSTAFF, PN_POLEARMS, SPEAR, TRIDENT, LANCE, BOW, SLING,
+-    CROSSBOW, DART, SHURIKEN, BOOMERANG, PN_WHIP, UNICORN_HORN,
++    ROCKET_LAUNCHER, CROSSBOW, DART, SHURIKEN, BOOMERANG, PN_WHIP, UNICORN_HORN,
+     PN_ATTACK_SPELL, PN_HEALING_SPELL, PN_DIVINATION_SPELL,
+     PN_ENCHANTMENT_SPELL, PN_CLERIC_SPELL, PN_ESCAPE_SPELL, PN_MATTER_SPELL,
+     PN_BARE_HANDED, PN_TWO_WEAPONS, PN_RIDING
+@@ -116,6 +116,9 @@ struct obj *obj;
+         if (is_ammo(obj))
+             descr = "arrow";
+         break;
++    case P_LAUNCHER:
++        if (is_ammo(obj))
++            descr = "rocket";
+     case P_CROSSBOW:
+         if (is_ammo(obj))
+             descr = "bolt";
+@@ -376,7 +379,8 @@ int x;
+ }
+
+ static NEARDATA const int rwep[] = {
+-    DWARVISH_SPEAR, SILVER_SPEAR, ELVEN_SPEAR, SPEAR, ORCISH_SPEAR, JAVELIN,
++    ROCKET, DWARVISH_SPEAR, SILVER_SPEAR, ELVEN_SPEAR, SPEAR,
++    ORCISH_SPEAR, JAVELIN,
+     SHURIKEN, YA, SILVER_ARROW, ELVEN_ARROW, ARROW, ORCISH_ARROW,
+     CROSSBOW_BOLT, SILVER_DAGGER, ELVEN_DAGGER, DAGGER, ORCISH_DAGGER, KNIFE,
+     FLINT, ROCK, LOADSTONE, LUCKSTONE, DART,
+@@ -467,6 +471,9 @@ register struct monst *mtmp;
+         prop = (objects[rwep[i]]).oc_skill;
+         if (prop < 0) {
+             switch (-prop) {
++            case P_LAUNCHER:
++                propellor = (oselect(mtmp, ROCKET_LAUNCHER));
++                break;
+             case P_BOW:
+                 propellor = (oselect(mtmp, YUMI));
+                 if (!propellor)
